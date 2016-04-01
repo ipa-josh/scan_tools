@@ -57,7 +57,8 @@
 #include <ratslam_ros/TopologicalAction.h>
 
 #include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
+#include <message_filters/synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
 
 #include <csm/csm_all.h>  // csm defines min and max, but Eigen complains
 #undef min
@@ -110,13 +111,16 @@ class LaserScanMatcherMulti
 
     ros::NodeHandle nh_;
     ros::NodeHandle nh_private_;
+    
+    typedef message_filters::sync_policies::ApproximateTime<PointCloudT, ratslam_ros::TopologicalAction> SyncPolicy_Cloud;
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::LaserScan, ratslam_ros::TopologicalAction> SyncPolicy_Scan;
 
 	message_filters::Subscriber<sensor_msgs::LaserScan> scan_subscriber_;
 	message_filters::Subscriber<PointCloudT> cloud_subscriber_;
 	message_filters::Subscriber<ratslam_ros::TopologicalAction> action_sub1_, action_sub2_;
 	
-	message_filters::TimeSynchronizer<PointCloudT, ratslam_ros::TopologicalAction> cloud_sync_;
-	message_filters::TimeSynchronizer<sensor_msgs::LaserScan, ratslam_ros::TopologicalAction> scan_sync_;
+	message_filters::Synchronizer<SyncPolicy_Cloud> cloud_sync_;
+	message_filters::Synchronizer<SyncPolicy_Scan>  scan_sync_;
   
     ros::Subscriber odom_subscriber_;
     ros::Subscriber imu_subscriber_;

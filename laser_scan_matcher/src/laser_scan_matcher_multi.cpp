@@ -53,8 +53,8 @@ LaserScanMatcherMulti::LaserScanMatcherMulti(ros::NodeHandle nh, ros::NodeHandle
   cloud_subscriber_(nh, "cloud", 1),
   action_sub1_(nh, "action", 1),
   action_sub2_(nh, "action", 1),
-  cloud_sync_(cloud_subscriber_, action_sub2_, 10),
-  scan_sync_(scan_subscriber_, action_sub1_, 10)
+  cloud_sync_(SyncPolicy_Cloud(10), cloud_subscriber_, action_sub2_),
+  scan_sync_ (SyncPolicy_Scan(10),  scan_subscriber_,  action_sub1_)
 {
   ROS_INFO("Starting LaserScanMatcherMulti");
 
