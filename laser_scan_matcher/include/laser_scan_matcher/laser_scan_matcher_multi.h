@@ -54,6 +54,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl_ros/point_cloud.h>
+#include <ratslam_ros/TopologicalAction.h>
 
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
@@ -68,6 +69,10 @@ namespace scan_tools
 struct Index {
 	int x,y,th;
 	
+	Index(const int x, const int y, const int th) : 
+	 x(x), y(y), th(th)
+	{}
+	
 	bool operator<(const Index &o) const {
 		if(x==o.x) {
 			if(y==o.y)
@@ -75,6 +80,7 @@ struct Index {
 			return y<o.y;
 		}
 		return x<o.x;
+	}
 };
 
 struct ScanMem {
@@ -109,8 +115,8 @@ class LaserScanMatcherMulti
 	message_filters::Subscriber<PointCloudT> cloud_subscriber_;
 	message_filters::Subscriber<ratslam_ros::TopologicalAction> action_sub1_, action_sub2_;
 	
-	TimeSynchronizer<PointCloudT, ratslam_ros::TopologicalAction> cloud_sync_;
-	TimeSynchronizer<sensor_msgs::LaserScan, ratslam_ros::TopologicalAction> scan_sync_;
+	message_filters::TimeSynchronizer<PointCloudT, ratslam_ros::TopologicalAction> cloud_sync_;
+	message_filters::TimeSynchronizer<sensor_msgs::LaserScan, ratslam_ros::TopologicalAction> scan_sync_;
   
     ros::Subscriber odom_subscriber_;
     ros::Subscriber imu_subscriber_;
@@ -184,20 +190,20 @@ class LaserScanMatcherMulti
 
     sm_params input_;
     sm_result output_;
-    std::map<Index, ScanMem> prev_ldp_scans_;
+    std::map<Index, boost::shared_ptr<ScanMem> > prev_ldp_scans_;
 
     // **** methods
 
     void initParams();
-    void processScan(LDP& curr_ldp_scan, const ros::Time& time);
+    void processScan(LDP& curr_ldp_scan, const ros::Time& time, const Index &idx);
 
     void laserScanToLDP(const sensor_msgs::LaserScan::ConstPtr& scan_msg,
                               LDP& ldp);
     void PointCloudToLDP(const PointCloudT::ConstPtr& cloud,
                                LDP& ldp);
 
-    void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_msg, const ratslam_ros::TopologicaAction::ConstPtr &act_msg)
-    void cloudCallback (const PointCloudT::ConstPtr& cloud, const ratslam_ros::TopologicaAction::ConstPtr &act_msg)
+    void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_msg, const ratslam_ros::TopologicalAction::ConstPtr &act_msg);
+    void cloudCallback (const PointCloudT::ConstPtr& cloud, const ratslam_ros::TopologicalAction::ConstPtr &act_msg);
 
     void odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg);
     void imuCallback (const sensor_msgs::Imu::ConstPtr& imu_msg);

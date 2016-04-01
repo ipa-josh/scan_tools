@@ -35,7 +35,7 @@
  *  on Robotics and Automation (ICRA), 2008
  */
 
-#include <laser_scan_matcher/laser_scan_matcher.h>
+#include <laser_scan_matcher/laser_scan_matcher_multi.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <boost/assign.hpp>
 
@@ -53,8 +53,8 @@ LaserScanMatcherMulti::LaserScanMatcherMulti(ros::NodeHandle nh, ros::NodeHandle
   cloud_subscriber_(nh, "cloud", 1),
   action_sub1_(nh, "action", 1),
   action_sub2_(nh, "action", 1),
-  cloud_sync_(cloud_subscriber_, action_sub1_, 10),
-  scan_sync_(scan_subscriber_, action_sub2_, 10)
+  cloud_sync_(cloud_subscriber_, action_sub2_, 10),
+  scan_sync_(scan_subscriber_, action_sub1_, 10)
 {
   ROS_INFO("Starting LaserScanMatcherMulti");
 
@@ -119,6 +119,7 @@ LaserScanMatcherMulti::LaserScanMatcherMulti(ros::NodeHandle nh, ros::NodeHandle
   }
   else
   {
+	ROS_INFO("registerCallback scanCallback");
 	scan_sync_.registerCallback(boost::bind(&LaserScanMatcherMulti::scanCallback, this, _1, _2));
   }
 
@@ -387,7 +388,7 @@ void LaserScanMatcherMulti::velStmpCallback(const geometry_msgs::TwistStamped::C
   received_vel_ = true;
 }
 
-void LaserScanMatcherMulti::cloudCallback (const PointCloudT::ConstPtr& cloud)
+void LaserScanMatcherMulti::cloudCallback (const PointCloudT::ConstPtr& cloud, const ratslam_ros::TopologicalAction::ConstPtr &act_msg)
 {
   // **** if first scan, cache the tf from base to the scanner
   Index idx(act_msg->src_x, act_msg->src_y, act_msg->src_th);
@@ -403,7 +404,10 @@ void LaserScanMatcherMulti::cloudCallback (const PointCloudT::ConstPtr& cloud)
       return;
     }
 
-    PointCloudToLDP(cloud, prev_ldp_scans_[idx]);
+    LDP curr_ldp_scan;
+    PointCloudToLDP(cloud, curr_ldp_scan);
+	prev_ldp_scans_[idx].reset(new ScanMem(curr_ldp_scan));
+	prev_ldp_scans_[idx]->f2b_kf_ = f2b_;
     last_icp_time_ = cloud_header.stamp;
     initialized_ = true;
   }
@@ -413,8 +417,9 @@ void LaserScanMatcherMulti::cloudCallback (const PointCloudT::ConstPtr& cloud)
   processScan(curr_ldp_scan, cloud_header.stamp, idx);
 }
 
-void LaserScanMatcherMulti::scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_msg, const ratslam_ros::TopologicaAction::ConstPtr &act_msg)
+void LaserScanMatcherMulti::scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_msg, const ratslam_ros::TopologicalAction::ConstPtr &act_msg)
 {
+	ROS_INFO("scanCallback");
   // **** if first scan, cache the tf from base to the scanner
   Index idx(act_msg->src_x, act_msg->src_y, act_msg->src_th);
 
@@ -429,7 +434,10 @@ void LaserScanMatcherMulti::scanCallback (const sensor_msgs::LaserScan::ConstPtr
       return;
     }
 
-    laserScanToLDP(scan_msg, prev_ldp_scans_[idx]);
+    LDP curr_ldp_scan;
+    laserScanToLDP(scan_msg, curr_ldp_scan);
+	prev_ldp_scans_[idx].reset(new ScanMem(curr_ldp_scan));
+	prev_ldp_scans_[idx]->f2b_kf_ = f2b_;
     last_icp_time_ = scan_msg->header.stamp;
     initialized_ = true;
   }

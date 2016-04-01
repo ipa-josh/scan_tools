@@ -5,6 +5,7 @@ project(laser_scan_matcher)
 set( ROS_CXX_DEPENDENCIES
   roscpp
   nodelet
+  ratslam_ros
   sensor_msgs
   tf
   pcl_ros
@@ -33,10 +34,14 @@ catkin_package(
 
 #Create library
 add_library(laser_scan_matcher src/laser_scan_matcher.cpp)
+add_library(laser_scan_matcher_multi src/laser_scan_matcher_multi.cpp)
 
 #Note we don't link against pcl as we're using header-only parts of the library
 target_link_libraries( laser_scan_matcher ${catkin_LIBRARIES} ${csm_LIBRARIES})
 add_dependencies(laser_scan_matcher ${csm_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries( laser_scan_matcher_multi ${catkin_LIBRARIES} ${csm_LIBRARIES})
+add_dependencies(laser_scan_matcher_multi ${csm_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 #Create nodelet
 add_library(laser_scan_matcher_nodelet src/laser_scan_matcher_nodelet.cpp)
@@ -46,8 +51,11 @@ target_link_libraries(laser_scan_matcher_nodelet laser_scan_matcher)
 add_executable(laser_scan_matcher_node src/laser_scan_matcher_node.cpp)
 target_link_libraries( laser_scan_matcher_node laser_scan_matcher )
 
+add_executable(laser_scan_matcher_multi_node src/laser_scan_matcher_multi_node.cpp)
+target_link_libraries( laser_scan_matcher_multi_node laser_scan_matcher_multi )
+
 #Install library
-install(TARGETS laser_scan_matcher laser_scan_matcher_nodelet
+install(TARGETS laser_scan_matcher laser_scan_matcher_multi laser_scan_matcher_nodelet
     ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
     LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
     RUNTIME DESTINATION ${CATKIN_GLOBAL_BIN_DESTINATION})
@@ -57,7 +65,7 @@ install(DIRECTORY include/laser_scan_matcher/
     DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION} )
 
 #Install node
-install(TARGETS laser_scan_matcher_node
+install(TARGETS laser_scan_matcher_node laser_scan_matcher_multi_node
     RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION} )
 
 #Install nodelet description
