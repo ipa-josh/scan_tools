@@ -473,6 +473,8 @@ void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& tim
 	  prev_ldp_scans_[idx]->scan_->true_pose[0] = 0.0;
 	  prev_ldp_scans_[idx]->scan_->true_pose[1] = 0.0;
 	  prev_ldp_scans_[idx]->scan_->true_pose[2] = 0.0;
+	  
+	  return;
   }
 
   input_.laser_ref  = prev_ldp_scans_[idx]->scan_;
@@ -530,6 +532,9 @@ void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& tim
     // the correction of the laser's position, in the laser frame
     tf::Transform corr_ch_l;
     createTfFromXYTheta(output_.x[0], output_.x[1], output_.x[2], corr_ch_l);
+    
+    tf::Transform  tmp = pr_ch_l.inverse()*corr_ch_l;
+    ROS_INFO("correction %f %f %f", tmp.getOrigin().getX(), tmp.getOrigin().getY(), tf::getYaw(tmp.getRotation()));
 
     // the correction of the base's position, in the base frame
     corr_ch = base_to_laser_ * corr_ch_l * laser_to_base_;
