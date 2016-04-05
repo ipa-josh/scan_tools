@@ -76,6 +76,9 @@ LaserScanMatcherMulti::LaserScanMatcherMulti(ros::NodeHandle nh, ros::NodeHandle
   output_.dx_dy2_m = 0;
 
   // **** publishers
+  
+    odom_publisher_  = nh_.advertise<nav_msgs::Odometry>(
+      "odom_matched", 5);
 
   if (publish_pose_)
   {
@@ -363,6 +366,8 @@ void LaserScanMatcherMulti::imuCallback(const sensor_msgs::Imu::ConstPtr& imu_ms
 
 void LaserScanMatcherMulti::odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
 {
+  odom_publisher_.publish(odom_msg);
+  
   boost::mutex::scoped_lock(mutex_);
   latest_odom_msg_ = *odom_msg;
   if (!received_odom_)
@@ -532,17 +537,29 @@ void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& tim
     // the correction of the laser's position, in the laser frame
     tf::Transform corr_ch_l;
     createTfFromXYTheta(output_.x[0], output_.x[1], output_.x[2], corr_ch_l);
-    
-    tf::Transform  tmp = pr_ch_l.inverse()*corr_ch_l;
-    ROS_INFO("correction %f %f %f", tmp.getOrigin().getX(), tmp.getOrigin().getY(), tf::getYaw(tmp.getRotation()));
 
     // the correction of the base's position, in the base frame
     corr_ch = base_to_laser_ * corr_ch_l * laser_to_base_;
 
     // update the pose in the world frame
     f2b_ = prev_ldp_scans_[idx]->f2b_kf_ * corr_ch;
+    
+    tf::Transform  tmp = pr_ch_l.inverse()*corr_ch_l;
+    ROS_INFO("correction %f %f %f", corr_ch.getOrigin().getX(), corr_ch.getOrigin().getY(), tf::getYaw(corr_ch.getRotation()));
 
     // **** publish
+    
+    if(odom_publisher_.getNumSubscribers()>0 && (std::abs(corr_ch.getOrigin().getX())>0.01f||std::abs(corr_ch.getOrigin().getY())>0.01f||std::abs(tf::getYaw(corr_ch.getRotation()))>0.01f) ) {
+		nav_msgs::Odometry odom_msg;
+		odom_msg.header.stamp    = time;
+		odom_msg.header.frame_id = fixed_frame_;
+		
+		odom_msg.twist.twist.linear.x  = corr_ch.getOrigin().getX();
+		odom_msg.twist.twist.linear.y  = corr_ch.getOrigin().getY();
+		odom_msg.twist.twist.angular.z = tf::getYaw(corr_ch.getRotation());
+              
+		odom_publisher_.publish(odom_msg);
+	}
 
     if (publish_pose_)
     {

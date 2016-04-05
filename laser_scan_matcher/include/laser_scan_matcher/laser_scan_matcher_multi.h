@@ -133,6 +133,7 @@ class LaserScanMatcherMulti
     tf::Transform laser_to_base_; // static, cached, calculated from base_to_laser_
 
     ros::Publisher  pose_publisher_;
+    ros::Publisher  odom_publisher_;
     ros::Publisher  pose_stamped_publisher_;
     ros::Publisher  pose_with_covariance_publisher_;
     ros::Publisher  pose_with_covariance_stamped_publisher_;
