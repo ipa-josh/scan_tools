@@ -77,6 +77,9 @@ LaserScanMatcherMulti::LaserScanMatcherMulti(ros::NodeHandle nh, ros::NodeHandle
 
   // **** publishers
   
+  dbg_scan_publisher_[0] = nh_.advertise<sensor_msgs::LaserScan>("dbg_scan_ref", 5);
+  dbg_scan_publisher_[1] = nh_.advertise<sensor_msgs::LaserScan>("dbg_scan_inp", 5);
+  
     odom_publisher_  = nh_.advertise<nav_msgs::Odometry>(
       "odom_matched", 5);
 
@@ -540,6 +543,16 @@ void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& tim
 
     // the correction of the base's position, in the base frame
     corr_ch = base_to_laser_ * corr_ch_l * laser_to_base_;
+    
+    {
+    	header.frame_id = "dbg_ref";
+    	header.frame_id = "dbg_inp";
+    	dbg_scan_publisher_[0].publish();
+    	dbg_scan_publisher_[1].publish();
+    
+        tf::StampedTransform transform_msg (corr_ch, time, "dbg_ref", "dbg_inp");
+        tf_broadcaster_.sendTransform (transform_msg);
+    }
 
     // update the pose in the world frame
     f2b_ = prev_ldp_scans_[idx]->f2b_kf_ * corr_ch;
