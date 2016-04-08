@@ -137,6 +137,7 @@ class LaserScanMatcherMulti
     ros::Publisher  pose_stamped_publisher_;
     ros::Publisher  pose_with_covariance_publisher_;
     ros::Publisher  pose_with_covariance_stamped_publisher_;
+    ros::Publisher  dbg_scan_publisher_[2];
 
     // **** parameters
 
