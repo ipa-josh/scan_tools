@@ -87,8 +87,9 @@ struct Index {
 struct ScanMem {
 	LDP scan_;
     tf::Transform f2b_kf_; // pose of the last keyframe scan in fixed frame
+    sensor_msgs::LaserScan::ConstPtr ros_scan_;
     
-    ScanMem(const LDP &ldp) : scan_(ldp)
+    ScanMem(const LDP &ldp, const sensor_msgs::LaserScan::ConstPtr &scan) : scan_(ldp), ros_scan_(scan)
     {
 		f2b_kf_.setIdentity();
 	}
@@ -125,6 +126,9 @@ class LaserScanMatcherMulti
     ros::Subscriber odom_subscriber_;
     ros::Subscriber imu_subscriber_;
     ros::Subscriber vel_subscriber_;
+    
+    ros::Subscriber eval1_subscriber_;
+    ros::Subscriber eval2_subscriber_;
 
     tf::TransformListener    tf_listener_;
     tf::TransformBroadcaster tf_broadcaster_;
@@ -137,7 +141,7 @@ class LaserScanMatcherMulti
     ros::Publisher  pose_stamped_publisher_;
     ros::Publisher  pose_with_covariance_publisher_;
     ros::Publisher  pose_with_covariance_stamped_publisher_;
-    ros::Publisher  dbg_scan_publisher_[2];
+    ros::Publisher  dbg_scan_publisher_[3];
 
     // **** parameters
 
@@ -153,6 +157,8 @@ class LaserScanMatcherMulti
     bool publish_pose_with_covariance_stamped_;
     std::vector<double> position_covariance_;
     std::vector<double> orientation_covariance_;
+    
+    boost::shared_ptr<tf::Transform> correction_T_;
 
     bool use_cloud_input_;
 
@@ -201,7 +207,7 @@ class LaserScanMatcherMulti
     // **** methods
 
     void initParams();
-    void processScan(LDP& curr_ldp_scan, const ros::Time& time, const Index &idx);
+    void processScan(LDP& curr_ldp_scan, const ros::Time& time, const Index &idx, const sensor_msgs::LaserScan::ConstPtr &cur_ros_scan);
 
     void laserScanToLDP(const sensor_msgs::LaserScan::ConstPtr& scan_msg,
                               LDP& ldp);
@@ -216,6 +222,9 @@ class LaserScanMatcherMulti
     void velCallback (const geometry_msgs::Twist::ConstPtr& twist_msg);
     void velStmpCallback(const geometry_msgs::TwistStamped::ConstPtr& twist_msg);
 
+    void eval1Callback (const sensor_msgs::LaserScan::ConstPtr&);
+    void eval2Callback (const sensor_msgs::LaserScan::ConstPtr&);
+    
     void createCache (const sensor_msgs::LaserScan::ConstPtr& scan_msg);
     bool getBaseToLaserTf (const std::string& frame_id);
 

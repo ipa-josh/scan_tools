@@ -79,6 +79,7 @@ LaserScanMatcherMulti::LaserScanMatcherMulti(ros::NodeHandle nh, ros::NodeHandle
   
   dbg_scan_publisher_[0] = nh_.advertise<sensor_msgs::LaserScan>("dbg_scan_ref", 5);
   dbg_scan_publisher_[1] = nh_.advertise<sensor_msgs::LaserScan>("dbg_scan_inp", 5);
+  dbg_scan_publisher_[2] = nh_.advertise<sensor_msgs::LaserScan>("dbg_scan_refo", 5);
   
     odom_publisher_  = nh_.advertise<nav_msgs::Odometry>(
       "odom_matched", 5);
@@ -148,6 +149,12 @@ LaserScanMatcherMulti::LaserScanMatcherMulti(ros::NodeHandle nh, ros::NodeHandle
       vel_subscriber_ = nh_.subscribe(
         "vel", 1, &LaserScanMatcherMulti::velCallback, this);
   }
+  
+    eval1_subscriber_ = nh_.subscribe(
+      "/s1", 1, &LaserScanMatcherMulti::eval1Callback, this);
+    eval2_subscriber_ = nh_.subscribe(
+      "/s2", 1, &LaserScanMatcherMulti::eval2Callback, this);
+  
 }
 
 LaserScanMatcherMulti::~LaserScanMatcherMulti()
@@ -220,11 +227,11 @@ void LaserScanMatcherMulti::initParams()
   if (!nh_private_.getParam ("publish_pose", publish_pose_))
     publish_pose_ = true;
   if (!nh_private_.getParam ("publish_pose_stamped", publish_pose_stamped_))
-    publish_pose_stamped_ = false;
+    publish_pose_stamped_ = true;
   if (!nh_private_.getParam ("publish_pose_with_covariance", publish_pose_with_covariance_))
-    publish_pose_with_covariance_ = false;
+    publish_pose_with_covariance_ = true;
   if (!nh_private_.getParam ("publish_pose_with_covariance_stamped", publish_pose_with_covariance_stamped_))
-    publish_pose_with_covariance_stamped_ = false;
+    publish_pose_with_covariance_stamped_ = true;
 
   if (!nh_private_.getParam("position_covariance", position_covariance_))
   {
@@ -367,15 +374,91 @@ void LaserScanMatcherMulti::imuCallback(const sensor_msgs::Imu::ConstPtr& imu_ms
   }
 }
 
-void LaserScanMatcherMulti::odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
+sensor_msgs::LaserScan::ConstPtr g_eval_scan;
+
+void LaserScanMatcherMulti::eval1Callback(const sensor_msgs::LaserScan::ConstPtr& msg)
 {
+	g_eval_scan = msg;
+}
+
+void LaserScanMatcherMulti::eval2Callback(const sensor_msgs::LaserScan::ConstPtr& msg)
+{
+	if(!g_eval_scan) return;
+	
+  LDP scan1, scan2;
+  laserScanToLDP(g_eval_scan, scan1);
+  laserScanToLDP(msg, scan2);
+  
+  input_.laser_ref  = scan1;
+  input_.laser_sens = scan2;
+
+  input_.min_reading = msg->range_min;
+  input_.max_reading = msg->range_max;
+
+  input_.first_guess[0] = 0;
+  input_.first_guess[1] = 0;
+  input_.first_guess[2] = 0;
+  
+  // If they are non-Null, free covariance gsl matrices to avoid leaking memory
+  if (output_.cov_x_m)
+  {
+    gsl_matrix_free(output_.cov_x_m);
+    output_.cov_x_m = 0;
+  }
+  if (output_.dx_dy1_m)
+  {
+    gsl_matrix_free(output_.dx_dy1_m);
+    output_.dx_dy1_m = 0;
+  }
+  if (output_.dx_dy2_m)
+  {
+    gsl_matrix_free(output_.dx_dy2_m);
+    output_.dx_dy2_m = 0;
+  }
+	
+  sm_icp(&input_, &output_);
+
+  // unstamped Pose2D message
+  geometry_msgs::Pose2D::Ptr pose_msg;
+  pose_msg = boost::make_shared<geometry_msgs::Pose2D>();
+  
+  pose_msg->theta = -10000;
+
+  ROS_INFO("output %d", output_.valid);
+  if (output_.valid)
+  {
+    ROS_INFO("res %f %f %f", output_.x[0], output_.x[1], output_.x[2]);
+    
+    pose_msg->x = output_.x[0];
+    pose_msg->y = output_.x[1];
+    pose_msg->theta = output_.x[2];
+  }
+   pose_publisher_.publish(pose_msg);
+}
+
+
+void LaserScanMatcherMulti::odomCallback(const nav_msgs::Odometry::ConstPtr& _odom_msg)
+{
+  nav_msgs::Odometry odom_msg = *_odom_msg;
+  
+  if(received_odom_ && correction_T_) {
+	const double t = 1./(odom_msg.header.stamp-latest_odom_msg_.header.stamp).toSec();
+	  
+	odom_msg.twist.twist.linear.x  += t*correction_T_->getOrigin().getX();
+	odom_msg.twist.twist.linear.y  += t*correction_T_->getOrigin().getY();
+	odom_msg.twist.twist.angular.z += t*tf::getYaw(correction_T_->getRotation());
+	
+	ROS_INFO("odom corr. %f %f %f", correction_T_->getOrigin().getX(), correction_T_->getOrigin().getY(), tf::getYaw(correction_T_->getRotation()));
+	
+	correction_T_.reset();
+  }
   odom_publisher_.publish(odom_msg);
   
   boost::mutex::scoped_lock(mutex_);
-  latest_odom_msg_ = *odom_msg;
+  latest_odom_msg_ = odom_msg;
   if (!received_odom_)
   {
-    last_used_odom_msg_ = *odom_msg;
+    last_used_odom_msg_ = odom_msg;
     received_odom_ = true;
   }
 }
@@ -414,7 +497,7 @@ void LaserScanMatcherMulti::cloudCallback (const PointCloudT::ConstPtr& cloud, c
 
     LDP curr_ldp_scan;
     PointCloudToLDP(cloud, curr_ldp_scan);
-	prev_ldp_scans_[idx].reset(new ScanMem(curr_ldp_scan));
+	prev_ldp_scans_[idx].reset(new ScanMem(curr_ldp_scan, sensor_msgs::LaserScan::ConstPtr()));
 	prev_ldp_scans_[idx]->f2b_kf_ = f2b_;
     last_icp_time_ = cloud_header.stamp;
     initialized_ = true;
@@ -422,17 +505,19 @@ void LaserScanMatcherMulti::cloudCallback (const PointCloudT::ConstPtr& cloud, c
 
   LDP curr_ldp_scan;
   PointCloudToLDP(cloud, curr_ldp_scan);
-  processScan(curr_ldp_scan, cloud_header.stamp, idx);
+  processScan(curr_ldp_scan, cloud_header.stamp, idx, sensor_msgs::LaserScan::ConstPtr());
 }
 
 void LaserScanMatcherMulti::scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_msg, const ratslam_ros::TopologicalAction::ConstPtr &act_msg)
 {
-	ROS_INFO("scanCallback");
+	ROS_INFO("scanCallback id: %d/%d/%d", act_msg->src_x, act_msg->src_y, act_msg->src_th);
   // **** if first scan, cache the tf from base to the scanner
   Index idx(act_msg->src_x, act_msg->src_y, act_msg->src_th);
 
   if (!initialized_)
   {
+    ROS_INFO("!init");
+    
     createCache(scan_msg);    // caches the sin and cos of all angles
 
     // cache the static tf from base to laser
@@ -442,20 +527,20 @@ void LaserScanMatcherMulti::scanCallback (const sensor_msgs::LaserScan::ConstPtr
       return;
     }
 
-    LDP curr_ldp_scan;
+    /*LDP curr_ldp_scan;
     laserScanToLDP(scan_msg, curr_ldp_scan);
-	prev_ldp_scans_[idx].reset(new ScanMem(curr_ldp_scan));
-	prev_ldp_scans_[idx]->f2b_kf_ = f2b_;
+	prev_ldp_scans_[idx].reset(new ScanMem(curr_ldp_scan, scan_msg));
+	prev_ldp_scans_[idx]->f2b_kf_ = f2b_;*/
     last_icp_time_ = scan_msg->header.stamp;
     initialized_ = true;
   }
 
   LDP curr_ldp_scan;
   laserScanToLDP(scan_msg, curr_ldp_scan);
-  processScan(curr_ldp_scan, scan_msg->header.stamp, idx);
+  processScan(curr_ldp_scan, scan_msg->header.stamp, idx, scan_msg);
 }
 
-void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& time, const Index &idx)
+void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& time, const Index &idx, const sensor_msgs::LaserScan::ConstPtr &cur_ros_scan)
 {
   ros::WallTime start = ros::WallTime::now();
 
@@ -467,8 +552,25 @@ void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& tim
   // The computed correction is then propagated using the tf machinery
 
   if(prev_ldp_scans_.find(idx)==prev_ldp_scans_.end()) {
-	  prev_ldp_scans_[idx].reset(new ScanMem(curr_ldp_scan));
+	  prev_ldp_scans_[idx].reset(new ScanMem(curr_ldp_scan, cur_ros_scan));
 	  prev_ldp_scans_[idx]->f2b_kf_ = f2b_;
+	  
+		  tf::StampedTransform T;
+	  {
+		  try
+		  {
+			tf_listener_.waitForTransform(
+			  cur_ros_scan->header.frame_id, "odom", cur_ros_scan->header.stamp, ros::Duration(1.0));
+			tf_listener_.lookupTransform (
+			  cur_ros_scan->header.frame_id, "odom", cur_ros_scan->header.stamp, T);
+    ROS_INFO("tf capt. %f %f %f at %f (%f)", T.getOrigin().getX(), T.getOrigin().getY(), tf::getYaw(T.getRotation()), T.stamp_.toSec(), cur_ros_scan->header.stamp.toSec());
+		  prev_ldp_scans_[idx]->f2b_kf_ = T;
+		  }
+		  catch (tf::TransformException ex)
+		  {
+			ROS_WARN("Could not get initial transform from base to laser frame, %s", ex.what());
+		  }
+	  }
 	  
 	  prev_ldp_scans_[idx]->scan_->odometry[0] = 0.0;
 	  prev_ldp_scans_[idx]->scan_->odometry[1] = 0.0;
@@ -482,6 +584,7 @@ void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& tim
 	  prev_ldp_scans_[idx]->scan_->true_pose[1] = 0.0;
 	  prev_ldp_scans_[idx]->scan_->true_pose[2] = 0.0;
 	  
+	  //ROS_INFO("new idx");
 	  return;
   }
 
@@ -493,24 +596,65 @@ void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& tim
   double dt = (time - last_icp_time_).toSec();
   double pr_ch_x, pr_ch_y, pr_ch_a;
   getPrediction(pr_ch_x, pr_ch_y, pr_ch_a, dt);
+  ROS_INFO("pred %f %f %f", pr_ch_x, pr_ch_y, pr_ch_a);
+  
+  tf::Transform pr_ch, pr_O;
+  {
+	  tf::StampedTransform T;
+	  try
+	  {
+			tf_listener_.waitForTransform(
+			  cur_ros_scan->header.frame_id, "odom", cur_ros_scan->header.stamp, ros::Duration(1.0));
+			tf_listener_.lookupTransform (
+			  cur_ros_scan->header.frame_id, "odom", cur_ros_scan->header.stamp, T);
+	  }
+	  catch (tf::TransformException ex)
+	  {
+		ROS_WARN("Could not get initial transform from base to laser frame, %s", ex.what());
+	  }
+    ROS_INFO("tf_list %f %f %f at %f (%f)", T.getOrigin().getX(), T.getOrigin().getY(), tf::getYaw(T.getRotation()), T.stamp_.toSec(), cur_ros_scan->header.stamp.toSec());
+    
+    pr_O = pr_ch = T;
+    pr_ch_x = T.getOrigin().getX();
+    pr_ch_y = T.getOrigin().getY();
+    pr_ch_a = tf::getYaw(T.getRotation());
+	}
 
   // the predicted change of the laser's position, in the fixed frame
 
-  tf::Transform pr_ch;
-  createTfFromXYTheta(pr_ch_x, pr_ch_y, pr_ch_a, pr_ch);
+  //createTfFromXYTheta(pr_ch_x, pr_ch_y, pr_ch_a, pr_ch);
 
   // account for the change since the last kf, in the fixed frame
 
-  pr_ch = pr_ch * (f2b_ * prev_ldp_scans_[idx]->f2b_kf_.inverse());
+  //pr_ch = pr_ch * (f2b_ * prev_ldp_scans_[idx]->f2b_kf_.inverse());
+  //pr_ch = (pr_ch.inverse()*prev_ldp_scans_[idx]->f2b_kf_);//.inverse();
+  //pr_ch = (prev_ldp_scans_[idx]->f2b_kf_.inverse()*pr_ch);//.inverse();
+  pr_ch = (pr_O*prev_ldp_scans_[idx]->f2b_kf_.inverse());//.inverse();
 
   // the predicted change of the laser's position, in the laser frame
+  
+  ROS_INFO("rotate %f around (%f/%f/%f)", laser_to_base_.getRotation().getAngle(), laser_to_base_.getRotation().getAxis().getX()
+										, laser_to_base_.getRotation().getAxis().getY(), laser_to_base_.getRotation().getAxis().getZ());
 
   tf::Transform pr_ch_l;
-  pr_ch_l = laser_to_base_ * f2b_.inverse() * pr_ch * f2b_ * base_to_laser_ ;
+  //pr_ch_l = laser_to_base_ * f2b_.inverse() * pr_ch * f2b_ * base_to_laser_ ;
+  //pr_ch_l = laser_to_base_ * f2b_.inverse() * pr_ch * f2b_ * base_to_laser_ ;
+  //pr_ch_l = laser_to_base_ * pr_ch * base_to_laser_ ;
+  //pr_ch_l = pr_ch;
+  pr_ch_l = laser_to_base_ * pr_ch * base_to_laser_ ;
+  //pr_ch_l = laser_to_base_ * pr_O.inverse() * pr_ch * pr_O * base_to_laser_ ;
 
   input_.first_guess[0] = pr_ch_l.getOrigin().getX();
   input_.first_guess[1] = pr_ch_l.getOrigin().getY();
   input_.first_guess[2] = tf::getYaw(pr_ch_l.getRotation());
+  
+  /*input_.first_guess[0] = pr_ch.getOrigin().getX();
+  input_.first_guess[1] = pr_ch.getOrigin().getY();
+  input_.first_guess[2] = tf::getYaw(pr_ch.getRotation());*/
+  
+  ROS_INFO("tf last %f %f %f", prev_ldp_scans_[idx]->f2b_kf_.getOrigin().getX(), prev_ldp_scans_[idx]->f2b_kf_.getOrigin().getY(), tf::getYaw(prev_ldp_scans_[idx]->f2b_kf_.getRotation()));
+  ROS_INFO("first_guess %f %f %f", pr_ch.getOrigin().getX(), pr_ch.getOrigin().getY(), tf::getYaw(pr_ch.getRotation()));
+  ROS_INFO("first_guess %f %f %f", input_.first_guess[0], input_.first_guess[1], input_.first_guess[2]);
 
   // If they are non-Null, free covariance gsl matrices to avoid leaking memory
   if (output_.cov_x_m)
@@ -534,6 +678,7 @@ void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& tim
   sm_icp(&input_, &output_);
   tf::Transform corr_ch;
 
+  ROS_INFO("output %d", output_.valid);
   if (output_.valid)
   {
 
@@ -542,36 +687,71 @@ void LaserScanMatcherMulti::processScan(LDP& curr_ldp_scan, const ros::Time& tim
     createTfFromXYTheta(output_.x[0], output_.x[1], output_.x[2], corr_ch_l);
 
     // the correction of the base's position, in the base frame
+    //corr_ch = pr_O * base_to_laser_ * pr_ch_l * laser_to_base_ * pr_O.inverse();
+    corr_ch = base_to_laser_ * pr_ch_l * laser_to_base_;
+    ROS_INFO("correction %f %f %f", corr_ch.getOrigin().getX(), corr_ch.getOrigin().getY(), tf::getYaw(corr_ch.getRotation()));
+    //corr_ch = corr_ch_l;
+    //corr_ch = pr_O * base_to_laser_ * corr_ch_l * laser_to_base_ * pr_O.inverse();
     corr_ch = base_to_laser_ * corr_ch_l * laser_to_base_;
     
     {
-    	header.frame_id = "dbg_ref";
-    	header.frame_id = "dbg_inp";
-    	dbg_scan_publisher_[0].publish();
-    	dbg_scan_publisher_[1].publish();
+    	sensor_msgs::LaserScan m1, m2;
+    	m1 = *prev_ldp_scans_[idx]->ros_scan_;
+    	m2 = *cur_ros_scan;
     
-        tf::StampedTransform transform_msg (corr_ch, time, "dbg_ref", "dbg_inp");
-        tf_broadcaster_.sendTransform (transform_msg);
+        tf::StampedTransform transform_msg (pr_ch_l, time, "dbg_ref", "dbg_inp");
+        
+		tf::Transform T = pr_ch.inverse()*corr_ch;
+		
+        //{tf::StampedTransform transform_msg (pr_O.inverse(), time, "odom", "dbg_inp");
+		{tf::StampedTransform transform_msg ((corr_ch*prev_ldp_scans_[idx]->f2b_kf_).inverse(), time, "odom", "dbg_inp");
+        tf_broadcaster_.sendTransform (transform_msg);}
+        ros::spinOnce();
+		{tf::StampedTransform transform_msg ((pr_O).inverse(), time, "odom", "dbg_inpo");
+        tf_broadcaster_.sendTransform (transform_msg);}
+        ros::spinOnce();
+        //{tf::StampedTransform transform_msg ((prev_ldp_scans_[idx]->f2b_kf_*T).inverse(), time, "odom", "dbg_ref");
+        {tf::StampedTransform transform_msg ((prev_ldp_scans_[idx]->f2b_kf_).inverse(), time, "odom", "dbg_ref");
+        tf_broadcaster_.sendTransform (transform_msg);}
+        
+        ros::spinOnce();
+        
+    	
+    	m1.header.frame_id = "dbg_ref";
+    	m2.header.frame_id = "dbg_inp";
+    	m1.header.stamp = time;
+    	m2.header.stamp = time;
+    	sensor_msgs::LaserScan m3=m2;
+    	m3.header.frame_id = "dbg_inpo";
+    	dbg_scan_publisher_[0].publish(m1);
+    	dbg_scan_publisher_[1].publish(m2);
+    	dbg_scan_publisher_[2].publish(m3);
     }
 
     // update the pose in the world frame
     f2b_ = prev_ldp_scans_[idx]->f2b_kf_ * corr_ch;
     
-    tf::Transform  tmp = pr_ch_l.inverse()*corr_ch_l;
+    tf::Transform  tmp = pr_ch.inverse()*corr_ch_l;
     ROS_INFO("correction %f %f %f", corr_ch.getOrigin().getX(), corr_ch.getOrigin().getY(), tf::getYaw(corr_ch.getRotation()));
+    ROS_INFO("correction %f %f %f", tmp.getOrigin().getX(), tmp.getOrigin().getY(), tf::getYaw(tmp.getRotation()));
 
     // **** publish
     
     if(odom_publisher_.getNumSubscribers()>0 && (std::abs(corr_ch.getOrigin().getX())>0.01f||std::abs(corr_ch.getOrigin().getY())>0.01f||std::abs(tf::getYaw(corr_ch.getRotation()))>0.01f) ) {
-		nav_msgs::Odometry odom_msg;
-		odom_msg.header.stamp    = time;
-		odom_msg.header.frame_id = fixed_frame_;
-		
-		odom_msg.twist.twist.linear.x  = corr_ch.getOrigin().getX();
-		odom_msg.twist.twist.linear.y  = corr_ch.getOrigin().getY();
-		odom_msg.twist.twist.angular.z = tf::getYaw(corr_ch.getRotation());
-              
-		odom_publisher_.publish(odom_msg);
+	  tf::StampedTransform T;
+	  try
+	  {
+			tf_listener_.waitForTransform(
+			  "base_link", "odom", cur_ros_scan->header.stamp, ros::Duration(1.0));
+			tf_listener_.lookupTransform (
+			  "base_link", "odom", cur_ros_scan->header.stamp, T);
+	    //T.setOrigin(tf::Vector3(0,0,0));
+		correction_T_.reset(new tf::Transform(T*(pr_ch.inverse()*corr_ch)*T.inverse()));
+	  }
+	  catch (tf::TransformException ex)
+	  {
+		ROS_WARN("Could not get initial transform from base to laser frame, %s", ex.what());
+	  }
 	}
 
     if (publish_pose_)
