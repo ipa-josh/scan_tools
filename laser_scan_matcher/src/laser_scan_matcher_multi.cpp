@@ -415,8 +415,12 @@ void LaserScanMatcherMulti::eval2Callback(const sensor_msgs::LaserScan::ConstPtr
     gsl_matrix_free(output_.dx_dy2_m);
     output_.dx_dy2_m = 0;
   }
-	
+	gsl_set_error_handler_off();
+	try {
   sm_icp(&input_, &output_);
+} catch(...) {
+	output_.valid = false;
+}
 
   // unstamped Pose2D message
   geometry_msgs::Pose2D::Ptr pose_msg;
