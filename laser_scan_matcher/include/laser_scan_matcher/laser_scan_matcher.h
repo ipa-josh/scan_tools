@@ -110,6 +110,9 @@ class LaserScanMatcher
     bool publish_pose_with_covariance_stamped_;
     std::vector<double> position_covariance_;
     std::vector<double> orientation_covariance_;
+    double thr_movement_[3];
+    double thr_error_;
+    int thr_consecutive_;
 
     bool use_cloud_input_;
 
@@ -155,6 +158,8 @@ class LaserScanMatcher
     sm_params input_;
     sm_result output_;
     LDP prev_ldp_scan_;
+    
+    int errors_[3];
 
     // **** methods
 
@@ -183,6 +188,8 @@ class LaserScanMatcher
                        double& pr_ch_a, double dt);
 
     void createTfFromXYTheta(double x, double y, double theta, tf::Transform& t);
+    
+    void compareCorrection(const double *corr, const double *inp);
 };
 
 } // namespace scan_tools

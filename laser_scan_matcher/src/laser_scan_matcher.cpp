@@ -333,6 +333,19 @@ void LaserScanMatcher::initParams()
   // correspondence by 1/sigma^2
   if (!nh_private_.getParam ("use_sigma_weights", input_.use_sigma_weights))
     input_.use_sigma_weights = 0;
+    
+    
+  errors_[0] = errors_[1] = errors_[2] = 0;
+  if (!nh_private_.getParam ("thr_movement_0", thr_movement_[0]))
+    thr_movement_[0] = 0.05;
+  if (!nh_private_.getParam ("thr_movement_1", thr_movement_[1]))
+    thr_movement_[1] = 0.05;
+  if (!nh_private_.getParam ("thr_movement_2", thr_movement_[2]))
+    thr_movement_[2] = 0.15;
+  if (!nh_private_.getParam ("thr_error", thr_error_))
+    thr_error_ = 0.3;
+  if (!nh_private_.getParam ("thr_consecutive", thr_consecutive_))
+    thr_consecutive_ = 5;
 }
 
 void LaserScanMatcher::imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg)
@@ -423,6 +436,24 @@ void LaserScanMatcher::scanCallback (const sensor_msgs::LaserScan::ConstPtr& sca
   processScan(curr_ldp_scan, scan_msg->header.stamp);
 }
 
+void LaserScanMatcher::compareCorrection(const double *corr, const double *inp)
+{
+	for(int i=1; i<3; i++) {
+		if(std::abs(inp[i])<thr_movement_[i]) continue;
+		
+		double v = std::abs(corr[i]-inp[i])/std::abs(inp[i]);
+		bool e = (v>1.-thr_error_ && v<1.+thr_error_ && std::abs(corr[i])<thr_movement_[i]/2);
+		
+		if(e) errors_[i] = std::min(thr_consecutive_+2, errors_[i]+2);
+		else errors_[i] = std::max(0, errors_[i]-2);
+		
+		if(errors_[i]>thr_consecutive_) {
+			ROS_INFO("%d: %f (%f  %f)  --> %d (%d) ", i, v, corr[i], inp[i], (int)e, errors_[i]);
+			ROS_INFO("detected stuck by %d", i);
+		}
+	}
+}
+
 void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
 {
   ros::WallTime start = ros::WallTime::now();
@@ -501,6 +532,8 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
     // the correction of the laser's position, in the laser frame
     tf::Transform corr_ch_l;
     createTfFromXYTheta(output_.x[0], output_.x[1], output_.x[2], corr_ch_l);
+    
+    compareCorrection(output_.x, input_.first_guess);
 
     // the correction of the base's position, in the base frame
     corr_ch = base_to_laser_ * corr_ch_l * laser_to_base_;
