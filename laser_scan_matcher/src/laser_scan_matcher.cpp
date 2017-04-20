@@ -436,13 +436,27 @@ void LaserScanMatcher::scanCallback (const sensor_msgs::LaserScan::ConstPtr& sca
   processScan(curr_ldp_scan, scan_msg->header.stamp);
 }
 
+double _dist(const double *a, const int indx) {
+	if(indx==2) return std::abs(a[indx]);
+	return std::sqrt(a[0]*a[0] + a[1]*a[1]);
+}
+
+double _dist(const double *a, const double *b, const int indx) {
+	if(indx==2) return std::abs(a[indx]-b[indx]);
+	const double x=a[0]-b[0];
+	const double y=a[1]-b[1];
+	return std::sqrt(x*x + y*y);
+}
+
 void LaserScanMatcher::compareCorrection(const double *corr, const double *inp)
 {
 	for(int i=1; i<3; i++) {
-		if(std::abs(inp[i])<thr_movement_[i]) continue;
+		if(_dist(inp, i)<thr_movement_[i] && _dist(corr, i)<thr_movement_[i]) continue;
 		
-		double v = std::abs(corr[i]-inp[i])/std::abs(inp[i]);
-		bool e = (v>1.-thr_error_ && v<1.+thr_error_ && std::abs(corr[i])<thr_movement_[i]/2);
+		double v = _dist(corr, inp, i)/_dist(inp, i);
+		bool e = (v>1.-thr_error_ && v<1.+thr_error_);// && std::abs(corr[i])<thr_movement_[i]/2);
+		
+		std::cout<<(int)e<<" "<<v<<"   ";
 		
 		if(e) errors_[i] = std::min(thr_consecutive_+2, errors_[i]+2);
 		else errors_[i] = std::max(0, errors_[i]-2);
@@ -452,6 +466,8 @@ void LaserScanMatcher::compareCorrection(const double *corr, const double *inp)
 			ROS_INFO("detected stuck by %d", i);
 		}
 	}
+	
+	std::cout<<std::endl;
 }
 
 void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
@@ -488,12 +504,15 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
 
   // the predicted change of the laser's position, in the fixed frame
 
-  tf::Transform pr_ch;
+  tf::Transform pr_ch, pr_ch_tmp;
   createTfFromXYTheta(pr_ch_x, pr_ch_y, pr_ch_a, pr_ch);
 
   // account for the change since the last kf, in the fixed frame
 
+  pr_ch_tmp = pr_ch;
   pr_ch = pr_ch * (f2b_ * f2b_kf_.inverse());
+  
+  tf::Transform f2b_tmp = pr_ch_tmp.inverse()*pr_ch*f2b_kf_;
 
   // the predicted change of the laser's position, in the laser frame
 
@@ -533,7 +552,8 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
     tf::Transform corr_ch_l;
     createTfFromXYTheta(output_.x[0], output_.x[1], output_.x[2], corr_ch_l);
     
-    compareCorrection(output_.x, input_.first_guess);
+    //std::cout<<"***inp "<<input_.first_guess[0]<<" \t"<<input_.first_guess[1]<<" \t"<<input_.first_guess[2]<<std::endl;
+    //std::cout<<"***out "<<output_.x[0]<<" \t"<<output_.x[1]<<" \t"<<output_.x[2]<<std::endl;
 
     // the correction of the base's position, in the base frame
     corr_ch = base_to_laser_ * corr_ch_l * laser_to_base_;
@@ -647,6 +667,16 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
 
   if (newKeyframeNeeded(corr_ch))
   {
+    //check movement in base frame
+    tf::Transform tmp = f2b_kf_.inverse()*f2b_tmp;
+    double correction[3]={corr_ch.getOrigin().getX(), corr_ch.getOrigin().getY(), tf::getYaw(corr_ch.getRotation())};
+    double input[3]={tmp.getOrigin().getX(), tmp.getOrigin().getY(), tf::getYaw(tmp.getRotation())};
+    
+    std::cout<<"inp "<<input[0]<<" \t"<<input[1]<<" \t"<<input[2]<<std::endl;
+    std::cout<<"out "<<correction[0]<<" \t"<<correction[1]<<" \t"<<correction[2]<<std::endl;
+    
+    compareCorrection(correction, input);
+    
     // generate a keyframe
     ld_free(prev_ldp_scan_);
     prev_ldp_scan_ = curr_ldp_scan;
